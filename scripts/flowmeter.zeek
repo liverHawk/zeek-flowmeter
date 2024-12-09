@@ -67,7 +67,7 @@ export {
         bwd_last_window_size: count &log;
         fw_seg:            FlowMeter::statistics_info &log;
         bw_seg:            FlowMeter::statistics_info &log;
-        pkt_size_avg:      double &log;
+        pkt_size:          FlowMeter::statistics_info &log;
     };
 }
 
@@ -107,6 +107,8 @@ global previous_was_fwd: table[string] of bool;
 global window_size: table[string] of table[string] of count;
 
 global segment_vector: table[string] of table[string] of vector of count;
+global pkt_size_vector: table[string] of vector of double;
+
 
 
 # definition of the bitmasks for testing if a flag is set
@@ -327,6 +329,9 @@ event new_packet (c: connection, p: pkt_hdr) {
     if (!(c$uid in active_vector) ){
        active_vector[c$uid] = vector();
     }
+    if (!(c$uid in pkt_size_vector) ){
+       pkt_size_vector[c$uid] = vector();
+    }
     if (!(c$uid in idle_vector) ){
        idle_vector[c$uid] = vector();
     }
@@ -403,17 +408,21 @@ event new_packet (c: connection, p: pkt_hdr) {
     # initialize the payload size to 0
     local data_size = 0;
     local segment_size = 0;
+    local packet_size = 0;
 
     # if it is an ip6 packet take the payload size of the ip6 packet and subtract the header size of the encapsulated protocol
     if( is_ip6 ){
         data_size = p$ip6$len - header_size;
         segment_size = p$ip6$len;
+        packet_size = p$ip6$len;
     }
     # if it is an ip4 packet take the packet size of the ip4 packet and subtract the ip4 header size and the header size of the encapsulated protocol
     else{
         data_size = p$ip$len - p$ip$hl - header_size;
         segment_size = p$ip$len - p$ip$hl;
+        packet_size = p$ip$len;
     }
+    pkt_size_vector[c$uid] += packet_size;
     # if the packet is moving in the fwd direction add the data size to the fwd vector
     if ( is_fwd ){
         payload_vector[c$uid]["fwd"] += data_size;
@@ -672,6 +681,7 @@ event connection_state_remove(c: connection) {
     local payload_sta_bwd=generate_stats_count(payload_vector[c$uid]["bwd"]);
     local segment_sta_fwd=generate_stats_count(segment_vector[c$uid]["fwd"]);
     local segment_sta_bwd=generate_stats_count(segment_vector[c$uid]["bwd"]);
+    local pkt_size_sta=generate_stats_double(pkt_size_vector[c$uid]);
 
     # merge the fwd vector in the bwd vector, can be done as it is not needed anymore afterwards
     local size_payload_fwd = |payload_vector[c$uid]["fwd"]|;
@@ -756,7 +766,7 @@ event connection_state_remove(c: connection) {
         $fwd_bulk_bytes = fwd_bulk_bytes, $bwd_bulk_bytes = bwd_bulk_bytes, $fwd_bulk_packets =fwd_bulk_packets , $bwd_bulk_packets = bwd_bulk_packets,
         $fwd_bulk_rate = fwd_bulk_rate, $bwd_bulk_rate = bwd_bulk_rate, $fwd_init_window_size = window_size[c$uid]["init,fwd"], $bwd_init_window_size = window_size[c$uid]["init,bwd"],
         $fwd_last_window_size = window_size[c$uid]["last,fwd"], $bwd_last_window_size = window_size[c$uid]["last,bwd"],
-        $fw_seg = segment_sta_fwd, $bw_seg = segment_sta_bwd
+        $fw_seg = segment_sta_fwd, $bw_seg = segment_sta_bwd, $pkt_size = pkt_size_sta
     );
 
 

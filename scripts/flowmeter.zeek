@@ -422,9 +422,9 @@ event new_packet (c: connection, p: pkt_hdr) {
         segment_size = p$ip$len - p$ip$hl;
         packet_size = p$ip$len;
     }
-    act_pkt_vector[c$uid] += packet_size > 1 ? 1 : 0;
     # if the packet is moving in the fwd direction add the data size to the fwd vector
     if ( is_fwd ){
+        act_pkt_vector[c$uid] += packet_size > 1 ? 1 : 0;
         payload_vector[c$uid]["fwd"] += data_size;
         segment_vector[c$uid]["fwd"] += segment_size;
         if(data_size > 0){

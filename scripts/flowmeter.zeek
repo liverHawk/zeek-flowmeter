@@ -39,6 +39,7 @@ export {
         flow_ACK_flag_count:    count &log;
         fwd_URG_flag_count:    count &log;
         bwd_URG_flag_count:    count &log;
+        flow_URG_flag_count:   count &log;
         flow_CWR_flag_count:    count &log;
         flow_ECE_flag_count:    count &log;
         fwd_pkts_payload:  FlowMeter::statistics_info &log;
@@ -64,6 +65,9 @@ export {
         bwd_init_window_size: count &log;
         fwd_last_window_size: count &log;
         bwd_last_window_size: count &log;
+        fw_seg:            FlowMeter::statistics_info &log;
+        bw_seg:            FlowMeter::statistics_info &log;
+        pkt_size_avg:      double &log;
     };
 }
 
@@ -102,6 +106,7 @@ global previous_was_fwd: table[string] of bool;
 # double table to map the uid and fwd/bwd to the size of the first and last  window size seen for that uid and direction
 global window_size: table[string] of table[string] of count;
 
+global segment_vector: table[string] of table[string] of vector of count;
 
 
 # definition of the bitmasks for testing if a flag is set
@@ -293,13 +298,16 @@ event new_packet (c: connection, p: pkt_hdr) {
        packet_count[c$uid] = table(["fwd"]=0, ["bwd"]=0);
     }
     if (!(c$uid in flag_count)){
-        flag_count[c$uid] = table(["FIN"]=0, ["SYN"]=0, ["RST"]=0, ["fwd,PSH"]=0, ["bwd,PSH"]=0, ["ACK"]=0, ["fwd,URG"]=0, ["bwd,URG"]=0, ["ECE"]=0, ["CWR"]=0);
+        flag_count[c$uid] = table(["FIN"]=0, ["SYN"]=0, ["RST"]=0, ["fwd,PSH"]=0, ["bwd,PSH"]=0, ["ACK"]=0, ["fwd,URG"]=0, ["bwd,URG"]=0, ["ECE"]=0, ["CWR"]=0, ["URG"]=0);
     }
     if (!(c$uid in header_count)){
        header_count[c$uid] = table(["fwd,tot"]=0, ["fwd,min"]=0, ["fwd,max"]=0, ["bwd,tot"]=0, ["bwd,min"]=0, ["bwd,max"]=0);
     }
     if (!(c$uid in payload_vector)){
        payload_vector[c$uid] = table(["fwd"]=vector(), ["bwd"]=vector() );
+    }
+    if (!(c$uid in segment_vector)){
+       segment_vector[c$uid] = table(["fwd"]=vector(), ["bwd"]=vector() );
     }
     if (!(c$uid in data_packet_count)){
        data_packet_count[c$uid] = table(["fwd"]=0, ["bwd"]=0 );
@@ -394,18 +402,22 @@ event new_packet (c: connection, p: pkt_hdr) {
 
     # initialize the payload size to 0
     local data_size = 0;
+    local segment_size = 0;
 
     # if it is an ip6 packet take the payload size of the ip6 packet and subtract the header size of the encapsulated protocol
     if( is_ip6 ){
         data_size = p$ip6$len - header_size;
+        segment_size = p$ip6$len;
     }
     # if it is an ip4 packet take the packet size of the ip4 packet and subtract the ip4 header size and the header size of the encapsulated protocol
     else{
         data_size = p$ip$len - p$ip$hl - header_size;
+        segment_size = p$ip$len - p$ip$hl;
     }
     # if the packet is moving in the fwd direction add the data size to the fwd vector
     if ( is_fwd ){
         payload_vector[c$uid]["fwd"] += data_size;
+        segment_vector[c$uid]["fwd"] += segment_size;
         if(data_size > 0){
             ++data_packet_count[c$uid]["fwd"];
         }
@@ -413,6 +425,7 @@ event new_packet (c: connection, p: pkt_hdr) {
     # otherwise add it to the bwd vector
     else {
         payload_vector[c$uid]["bwd"] += data_size;
+        segment_vector[c$uid]["bwd"] += segment_size;
         if(data_size > 0){
             ++data_packet_count[c$uid]["bwd"];
         }
@@ -444,6 +457,7 @@ event new_packet (c: connection, p: pkt_hdr) {
             else{
                 ++flag_count[c$uid]["bwd,URG"];
             }
+            ++flag_count[c$uid]["URG"];
         }
         if(is_flag_set(p, ECE) ){
             ++flag_count[c$uid]["ECE"];
@@ -656,6 +670,8 @@ event connection_state_remove(c: connection) {
     # get the statistical overview for the payload in fwd and bwd direction
     local payload_sta_fwd=generate_stats_count(payload_vector[c$uid]["fwd"]);
     local payload_sta_bwd=generate_stats_count(payload_vector[c$uid]["bwd"]);
+    local segment_sta_fwd=generate_stats_count(segment_vector[c$uid]["fwd"]);
+    local segment_sta_bwd=generate_stats_count(segment_vector[c$uid]["bwd"]);
 
     # merge the fwd vector in the bwd vector, can be done as it is not needed anymore afterwards
     local size_payload_fwd = |payload_vector[c$uid]["fwd"]|;
@@ -723,22 +739,25 @@ event connection_state_remove(c: connection) {
     }
 
     # fill the Features object for this connection
-    local rec = FlowMeter::Features($uid = c$uid, $flow_duration = c$duration, $bwd_pkts_tot=packet_count[c$uid]["bwd"], $fwd_pkts_tot=packet_count[c$uid]["fwd"],
-                                           $flow_FIN_flag_count = flag_count[c$uid]["FIN"], $flow_SYN_flag_count = flag_count[c$uid]["SYN"], $flow_RST_flag_count = flag_count[c$uid]["RST"],
-                                           $fwd_PSH_flag_count = flag_count[c$uid]["fwd,PSH"], $bwd_PSH_flag_count = flag_count[c$uid]["bwd,PSH"], $flow_ACK_flag_count = flag_count[c$uid]["ACK"],
-                                           $fwd_URG_flag_count = flag_count[c$uid]["fwd,URG"], $bwd_URG_flag_count = flag_count[c$uid]["bwd,URG"], $flow_CWR_flag_count = flag_count[c$uid]["ECE"], $flow_ECE_flag_count = flag_count[c$uid]["CWR"],
-                                           $fwd_pkts_per_sec = fwd_pkts_per_sec, $bwd_pkts_per_sec = bwd_pkts_per_sec, $flow_pkts_per_sec = flow_pkts_per_sec, $down_up_ratio = down_up_ratio,
-                                           $fwd_header_size_tot = header_count[c$uid]["fwd,tot"], $fwd_header_size_min = header_count[c$uid]["fwd,min"], $fwd_header_size_max = header_count[c$uid]["fwd,max"],
-                                           $bwd_header_size_tot = header_count[c$uid]["bwd,tot"], $bwd_header_size_min = header_count[c$uid]["bwd,min"], $bwd_header_size_max = header_count[c$uid]["bwd,max"],
-                                           $fwd_data_pkts_tot = data_packet_count[c$uid]["fwd"], $bwd_data_pkts_tot = data_packet_count[c$uid]["bwd"], $payload_bytes_per_second = payload_bytes_per_second,
-                                           $fwd_pkts_payload = payload_sta_fwd, $bwd_pkts_payload = payload_sta_bwd, $flow_pkts_payload = payload_sta_flow,
-                                           $fwd_subflow_pkts = packet_count[c$uid]["fwd"] / (1.0 * num_subflows[c$uid]), $bwd_subflow_pkts = packet_count[c$uid]["bwd"] / (1.0 * num_subflows[c$uid]),
-                                           $fwd_subflow_bytes = payload_sta_fwd$tot / num_subflows[c$uid], $bwd_subflow_bytes = payload_sta_bwd$tot / num_subflows[c$uid],
-                                           $active=generate_stats_double(active_vector[c$uid]), $idle=generate_stats_double(idle_vector[c$uid]),
-                                           $fwd_iat=generate_stats_double(iat_vector[c$uid]["fwd"]), $bwd_iat=generate_stats_double(iat_vector[c$uid]["bwd"]), $flow_iat = generate_stats_double(iat_vector[c$uid]["flow"]),
-                                           $fwd_bulk_bytes = fwd_bulk_bytes, $bwd_bulk_bytes = bwd_bulk_bytes, $fwd_bulk_packets =fwd_bulk_packets , $bwd_bulk_packets = bwd_bulk_packets,
-                                           $fwd_bulk_rate = fwd_bulk_rate, $bwd_bulk_rate = bwd_bulk_rate, $fwd_init_window_size = window_size[c$uid]["init,fwd"], $bwd_init_window_size = window_size[c$uid]["init,bwd"],
-                                           $fwd_last_window_size = window_size[c$uid]["last,fwd"], $bwd_last_window_size = window_size[c$uid]["last,bwd"]);
+    local rec = FlowMeter::Features(
+        $uid = c$uid, $flow_duration = c$duration, $bwd_pkts_tot=packet_count[c$uid]["bwd"], $fwd_pkts_tot=packet_count[c$uid]["fwd"],
+        $flow_FIN_flag_count = flag_count[c$uid]["FIN"], $flow_SYN_flag_count = flag_count[c$uid]["SYN"], $flow_RST_flag_count = flag_count[c$uid]["RST"],
+        $fwd_PSH_flag_count = flag_count[c$uid]["fwd,PSH"], $bwd_PSH_flag_count = flag_count[c$uid]["bwd,PSH"], $flow_ACK_flag_count = flag_count[c$uid]["ACK"],
+        $fwd_URG_flag_count = flag_count[c$uid]["fwd,URG"], $bwd_URG_flag_count = flag_count[c$uid]["bwd,URG"], $flow_URG_flag_count = flag_count[c$uid]["URG"],$flow_CWR_flag_count = flag_count[c$uid]["ECE"], $flow_ECE_flag_count = flag_count[c$uid]["CWR"],
+        $fwd_pkts_per_sec = fwd_pkts_per_sec, $bwd_pkts_per_sec = bwd_pkts_per_sec, $flow_pkts_per_sec = flow_pkts_per_sec, $down_up_ratio = down_up_ratio,
+        $fwd_header_size_tot = header_count[c$uid]["fwd,tot"], $fwd_header_size_min = header_count[c$uid]["fwd,min"], $fwd_header_size_max = header_count[c$uid]["fwd,max"],
+        $bwd_header_size_tot = header_count[c$uid]["bwd,tot"], $bwd_header_size_min = header_count[c$uid]["bwd,min"], $bwd_header_size_max = header_count[c$uid]["bwd,max"],
+        $fwd_data_pkts_tot = data_packet_count[c$uid]["fwd"], $bwd_data_pkts_tot = data_packet_count[c$uid]["bwd"], $payload_bytes_per_second = payload_bytes_per_second,
+        $fwd_pkts_payload = payload_sta_fwd, $bwd_pkts_payload = payload_sta_bwd, $flow_pkts_payload = payload_sta_flow,
+        $fwd_subflow_pkts = packet_count[c$uid]["fwd"] / (1.0 * num_subflows[c$uid]), $bwd_subflow_pkts = packet_count[c$uid]["bwd"] / (1.0 * num_subflows[c$uid]),
+        $fwd_subflow_bytes = payload_sta_fwd$tot / num_subflows[c$uid], $bwd_subflow_bytes = payload_sta_bwd$tot / num_subflows[c$uid],
+        $active=generate_stats_double(active_vector[c$uid]), $idle=generate_stats_double(idle_vector[c$uid]),
+        $fwd_iat=generate_stats_double(iat_vector[c$uid]["fwd"]), $bwd_iat=generate_stats_double(iat_vector[c$uid]["bwd"]), $flow_iat = generate_stats_double(iat_vector[c$uid]["flow"]),
+        $fwd_bulk_bytes = fwd_bulk_bytes, $bwd_bulk_bytes = bwd_bulk_bytes, $fwd_bulk_packets =fwd_bulk_packets , $bwd_bulk_packets = bwd_bulk_packets,
+        $fwd_bulk_rate = fwd_bulk_rate, $bwd_bulk_rate = bwd_bulk_rate, $fwd_init_window_size = window_size[c$uid]["init,fwd"], $bwd_init_window_size = window_size[c$uid]["init,bwd"],
+        $fwd_last_window_size = window_size[c$uid]["last,fwd"], $bwd_last_window_size = window_size[c$uid]["last,bwd"],
+        $fw_seg = segment_sta_fwd, $bw_seg = segment_sta_bwd
+    );
 
 
 
@@ -759,6 +778,7 @@ event connection_state_remove(c: connection) {
     delete bulk_packets[c$uid];
     delete window_size[c$uid];
     delete iat_vector[c$uid];
+    delete segment_vector[c$uid];
     # write the measures of this connection to the log file
     Log::write(FlowMeter::LOG, rec);
 }

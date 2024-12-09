@@ -68,6 +68,7 @@ export {
         fw_seg:            FlowMeter::statistics_info &log;
         bw_seg:            FlowMeter::statistics_info &log;
         act_pkt:          FlowMeter::statistics_info &log;
+        pkt_size:          FlowMeter::statistics_info &log;
     };
 }
 
@@ -108,6 +109,7 @@ global window_size: table[string] of table[string] of count;
 
 global segment_vector: table[string] of table[string] of vector of count;
 global act_pkt_vector: table[string] of vector of double;
+global pkt_size_vector: table[string] of vector of double;
 
 
 
@@ -332,6 +334,9 @@ event new_packet (c: connection, p: pkt_hdr) {
     if (!(c$uid in act_pkt_vector) ){
        act_pkt_vector[c$uid] = vector();
     }
+    if (!(c$uid in pkt_size_vector) ){
+       pkt_size_vector[c$uid] = vector();
+    }
     if (!(c$uid in idle_vector) ){
        idle_vector[c$uid] = vector();
     }
@@ -422,6 +427,7 @@ event new_packet (c: connection, p: pkt_hdr) {
         segment_size = p$ip$len - p$ip$hl;
         packet_size = p$ip$len;
     }
+    pkt_size_vector[c$uid] += packet_size;
     # if the packet is moving in the fwd direction add the data size to the fwd vector
     if ( is_fwd ){
         act_pkt_vector[c$uid] += packet_size > 1 ? 1 : 0;
@@ -682,6 +688,7 @@ event connection_state_remove(c: connection) {
     local segment_sta_fwd=generate_stats_count(segment_vector[c$uid]["fwd"]);
     local segment_sta_bwd=generate_stats_count(segment_vector[c$uid]["bwd"]);
     local act_pkt_sta=generate_stats_double(act_pkt_vector[c$uid]);
+    local pkt_size_sta=generate_stats_double(pkt_size_vector[c$uid]);
 
     # merge the fwd vector in the bwd vector, can be done as it is not needed anymore afterwards
     local size_payload_fwd = |payload_vector[c$uid]["fwd"]|;
@@ -766,7 +773,7 @@ event connection_state_remove(c: connection) {
         $fwd_bulk_bytes = fwd_bulk_bytes, $bwd_bulk_bytes = bwd_bulk_bytes, $fwd_bulk_packets =fwd_bulk_packets , $bwd_bulk_packets = bwd_bulk_packets,
         $fwd_bulk_rate = fwd_bulk_rate, $bwd_bulk_rate = bwd_bulk_rate, $fwd_init_window_size = window_size[c$uid]["init,fwd"], $bwd_init_window_size = window_size[c$uid]["init,bwd"],
         $fwd_last_window_size = window_size[c$uid]["last,fwd"], $bwd_last_window_size = window_size[c$uid]["last,bwd"],
-        $fw_seg = segment_sta_fwd, $bw_seg = segment_sta_bwd, $act_pkt = act_pkt_sta
+        $fw_seg = segment_sta_fwd, $bw_seg = segment_sta_bwd, $act_pkt = act_pkt_sta, $pkt_size = pkt_size_sta
     );
 
 

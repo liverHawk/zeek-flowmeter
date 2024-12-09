@@ -70,6 +70,7 @@ export {
         act_pkt:          FlowMeter::statistics_info &log;
         pkt_size:          FlowMeter::statistics_info &log;
     };
+    # TODO: add pkt_len_va ... minimum inter-arrival time of packets
 }
 
 # double table to map the uid and fwd/bwd to the count holding the packet count for that uid and direction

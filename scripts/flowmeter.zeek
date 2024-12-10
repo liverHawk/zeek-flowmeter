@@ -69,8 +69,8 @@ export {
         bw_seg:            FlowMeter::statistics_info &log;
         act_pkt:          FlowMeter::statistics_info &log;
         pkt_size:          FlowMeter::statistics_info &log;
+        pkt_iat_min:          double &log;
     };
-    # TODO: add pkt_len_va ... minimum inter-arrival time of packets
 }
 
 # double table to map the uid and fwd/bwd to the count holding the packet count for that uid and direction
@@ -756,6 +756,12 @@ event connection_state_remove(c: connection) {
         bwd_bulk_rate = bulk_bytes[c$uid]["bwd"] / bulk_time[c$uid]["bwd"];
     }
 
+    local iat_forward = generate_stats_double(iat_vector[c$uid]["fwd"]);
+    local iat_backward = generate_stats_double(iat_vector[c$uid]["bwd"]);
+    local iat_flow = generate_stats_double(iat_vector[c$uid]["flow"]);
+    local iat_min = iat_forward$min < iat_backward$min ? iat_forward$min : iat_backward$min;
+    local packet_iat_min = iat_flow$min < iat_min ? iat_flow$min : iat_min;
+
     # fill the Features object for this connection
     local rec = FlowMeter::Features(
         $uid = c$uid, $flow_duration = c$duration, $bwd_pkts_tot=packet_count[c$uid]["bwd"], $fwd_pkts_tot=packet_count[c$uid]["fwd"],
@@ -770,11 +776,12 @@ event connection_state_remove(c: connection) {
         $fwd_subflow_pkts = packet_count[c$uid]["fwd"] / (1.0 * num_subflows[c$uid]), $bwd_subflow_pkts = packet_count[c$uid]["bwd"] / (1.0 * num_subflows[c$uid]),
         $fwd_subflow_bytes = payload_sta_fwd$tot / num_subflows[c$uid], $bwd_subflow_bytes = payload_sta_bwd$tot / num_subflows[c$uid],
         $active=generate_stats_double(active_vector[c$uid]), $idle=generate_stats_double(idle_vector[c$uid]),
-        $fwd_iat=generate_stats_double(iat_vector[c$uid]["fwd"]), $bwd_iat=generate_stats_double(iat_vector[c$uid]["bwd"]), $flow_iat = generate_stats_double(iat_vector[c$uid]["flow"]),
+        $fwd_iat=iat_forward, $bwd_iat=iat_backward, $flow_iat = iat_flow,
         $fwd_bulk_bytes = fwd_bulk_bytes, $bwd_bulk_bytes = bwd_bulk_bytes, $fwd_bulk_packets =fwd_bulk_packets , $bwd_bulk_packets = bwd_bulk_packets,
         $fwd_bulk_rate = fwd_bulk_rate, $bwd_bulk_rate = bwd_bulk_rate, $fwd_init_window_size = window_size[c$uid]["init,fwd"], $bwd_init_window_size = window_size[c$uid]["init,bwd"],
         $fwd_last_window_size = window_size[c$uid]["last,fwd"], $bwd_last_window_size = window_size[c$uid]["last,bwd"],
-        $fw_seg = segment_sta_fwd, $bw_seg = segment_sta_bwd, $act_pkt = act_pkt_sta, $pkt_size = pkt_size_sta
+        $fw_seg = segment_sta_fwd, $bw_seg = segment_sta_bwd, $act_pkt = act_pkt_sta, $pkt_size = pkt_size_sta,
+        $pkt_iat_min = packet_iat_min,
     );
 
 
